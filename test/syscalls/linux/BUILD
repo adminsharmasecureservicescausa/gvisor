@@ -1100,6 +1100,7 @@ cc_binary(
         gtest,
         "//test/util:logging",
         "//test/util:multiprocess_util",
+        "//test/util:platform_util",
         "//test/util:posix_error",
         "//test/util:signal_util",
         "//test/util:test_util",

@@ -92,6 +92,8 @@ type ProcessProcfsDump struct {
 	Status Status `json:"status,omitempty"`
 	// Stat is /proc/[pid]/stat.
 	Stat Stat `json:"stat,omitempty"`
+	// Maps is /proc/[pid]/maps.
+	Maps []mm.Mapping `json:"maps,omitempty"`
 }
 
 // getMM returns t's MemoryManager. On success, the MemoryManager's users count
@@ -282,5 +284,6 @@ func Dump(t *kernel.Task, pid kernel.ThreadID, pidns *kernel.PIDNamespace) (Proc
 		Cgroup: t.GetCgroupEntries(),
 		Status: getStatus(t, mm, pid, pidns),
 		Stat:   getStat(t, pid, pidns),
+		Maps:   mm.ReadMapsDataInto(ctx, bytes.NewBufferString("")),
 	}, nil
 }

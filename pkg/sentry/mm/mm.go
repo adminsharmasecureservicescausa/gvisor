@@ -429,6 +429,18 @@ func (v *vma) copy() vma {
 	}
 }
 
+// Mapping contains information for /proc/[pid]/maps.
+type Mapping struct {
+	Address     hostarch.AddrRange  `json:"address,omitempty"`
+	Permissions hostarch.AccessType `json:"permissions"`
+	Private     string              `json:"private,omitempty"`
+	Offset      uint64              `json:"offset"`
+	DevMajor    uint32              `json:"deviceMajor,omitempty"`
+	DevMinor    uint32              `json:"deviceMinor,omitempty"`
+	Inode       uint64              `json:"inode,omitempty"`
+	Pathname    string              `json:"pathname,omitempty"`
+}
+
 // pma represents a platform mapping area.
 //
 // +stateify savable

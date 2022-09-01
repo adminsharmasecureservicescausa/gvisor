@@ -71,8 +71,7 @@ func Mount(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscall
 		return 0, nil, linuxerr.EPERM
 	}
 
-	const unsupportedOps = linux.MS_REMOUNT | linux.MS_BIND |
-		linux.MS_SHARED | linux.MS_PRIVATE | linux.MS_SLAVE |
+	const unsupportedOps = linux.MS_REMOUNT | linux.MS_BIND | linux.MS_SLAVE |
 		linux.MS_UNBINDABLE | linux.MS_MOVE
 
 	// Silently allow MS_NOSUID, since we don't implement set-id bits
@@ -86,7 +85,31 @@ func Mount(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscall
 		return 0, nil, linuxerr.EINVAL
 	}
 
+	target, err := getTaskPathOperation(t, linux.AT_FDCWD, targetPath, disallowEmptyPath, nofollowFinalSymlink)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer target.Release(t)
+
 	var opts vfs.MountOptions
+	opts.GetFilesystemOptions.Data = data
+
+	const propagationFlags = linux.MS_SHARED | linux.MS_PRIVATE | linux.MS_SLAVE | linux.MS_UNBINDABLE
+	if flags&propagationFlags != 0 {
+		allFlags := flags & propagationFlags
+		// Check if flags is a power of 2. If not then more than one flag is set.
+		if (allFlags & (allFlags - 1)) != 0 {
+			return 0, nil, linuxerr.EINVAL
+		}
+
+		if flags&linux.MS_SHARED == linux.MS_SHARED {
+			opts.Flags.Shared = true
+		} else if flags&linux.MS_PRIVATE == linux.MS_PRIVATE {
+			opts.Flags.Shared = false
+		}
+		return 0, nil, t.Kernel().VFS().SetMountPropagation(t, creds, &target.pop, &opts)
+	}
+
 	if flags&linux.MS_NOATIME == linux.MS_NOATIME {
 		opts.Flags.NoATime = true
 	}
@@ -102,13 +125,6 @@ func Mount(t *kernel.Task, args arch.SyscallArguments) (uintptr, *kernel.Syscall
 	if flags&linux.MS_RDONLY == linux.MS_RDONLY {
 		opts.ReadOnly = true
 	}
-	opts.GetFilesystemOptions.Data = data
-
-	target, err := getTaskPathOperation(t, linux.AT_FDCWD, targetPath, disallowEmptyPath, nofollowFinalSymlink)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer target.Release(t)
 	_, err = t.Kernel().VFS().MountAt(t, creds, source, &target.pop, fsType, &opts)
 	return 0, nil, err
 }

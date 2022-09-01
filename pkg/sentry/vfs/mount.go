@@ -82,6 +82,11 @@ type Mount struct {
 	// Mount. children is protected by VirtualFilesystem.mountMu.
 	children map[*Mount]struct{}
 
+	// sharedList is the list of mounts in the shared peer group.
+	sharedList  sharedList
+	sharedEntry sharedEntry
+	groupID     uint32
+
 	// umounted is true if VFS.umountRecursiveLocked() has been called on this
 	// Mount. VirtualFilesystem does not hold a reference on Mounts for which
 	// umounted is true. umounted is protected by VirtualFilesystem.mountMu.
@@ -93,6 +98,10 @@ type Mount struct {
 	// writers is accessed using atomic memory operations.
 	writers atomicbitops.Int64
 }
+
+type sharedMapper struct{}
+
+func (sharedMapper) linkerFor(mnt *Mount) *sharedEntry { return &mnt.sharedEntry }
 
 func newMount(vfs *VirtualFilesystem, fs *Filesystem, root *Dentry, mntns *MountNamespace, opts *MountOptions) *Mount {
 	mnt := &Mount{
@@ -267,6 +276,18 @@ func (vfs *VirtualFilesystem) ConnectMountAt(ctx context.Context, creds *auth.Cr
 	vfs.connectLocked(mnt, vd, mntns)
 	vfs.mounts.seq.EndWrite()
 	vdDentry.mu.Unlock()
+
+	// Inherit propagation type from parent mount.
+	if vd.mount.Flags.Shared {
+		id, err := vfs.allocateGroupID()
+		if err != nil {
+			vfs.mountMu.Unlock()
+			return err
+		}
+		mnt.Flags.Shared = true
+		mnt.groupID = id
+		mnt.sharedList.PushBack(mnt)
+	}
 	vfs.mountMu.Unlock()
 	return nil
 }
@@ -379,6 +400,36 @@ func (vfs *VirtualFilesystem) UmountAt(ctx context.Context, creds *auth.Credenti
 	return nil
 }
 
+// SetMountPropagation changes the propagation type of the mount pointed to by
+// pop.
+func (vfs *VirtualFilesystem) SetMountPropagation(ctx context.Context, creds *auth.Credentials, pop *PathOperation, opts *MountOptions) error {
+	vd, err := vfs.GetDentryAt(ctx, creds, pop, &GetDentryOptions{})
+	if err != nil {
+		return err
+	}
+	defer vd.DecRef(ctx)
+	vfs.mountMu.Lock()
+	defer vfs.mountMu.Unlock()
+
+	mnt := vd.mount
+	if opts.Flags.Shared && !mnt.Flags.Shared {
+		id, err := vfs.allocateGroupID()
+		if err != nil {
+			return err
+		}
+		mnt.groupID = id
+		mnt.sharedList.PushBack(mnt)
+	} else if !opts.Flags.Shared && mnt.Flags.Shared {
+		mnt.sharedList.Remove(mnt)
+		if mnt.sharedList.Empty() {
+			vfs.freeGroupID(mnt.groupID)
+		}
+		mnt.groupID = 0
+	}
+	mnt.Flags.Shared = opts.Flags.Shared
+	return nil
+}
+
 // +stateify savable
 type umountRecursiveOptions struct {
 	// If eager is true, ensure that future calls to Mount.tryIncMountedRef()
@@ -412,6 +463,12 @@ type umountRecursiveOptions struct {
 func (vfs *VirtualFilesystem) umountRecursiveLocked(mnt *Mount, opts *umountRecursiveOptions, vdsToDecRef []VirtualDentry, mountsToDecRef []*Mount) ([]VirtualDentry, []*Mount) {
 	if !mnt.umounted {
 		mnt.umounted = true
+		if mnt.Flags.Shared {
+			mnt.sharedList.Remove(mnt)
+			if mnt.sharedList.Empty() {
+				vfs.freeGroupID(mnt.groupID)
+			}
+		}
 		mountsToDecRef = append(mountsToDecRef, mnt)
 		if parent := mnt.parent(); parent != nil && (opts.disconnectHierarchy || !parent.umounted) {
 			vdsToDecRef = append(vdsToDecRef, vfs.disconnectLocked(mnt))
@@ -1042,6 +1099,9 @@ func (vfs *VirtualFilesystem) GenerateProcMountInfo(ctx context.Context, taskRoo
 		fmt.Fprintf(buf, "%s ", opts)
 
 		// (7) Optional fields: zero or more fields of the form "tag[:value]".
+		if mnt.Flags.Shared {
+			fmt.Fprintf(buf, "shared:%d ", mnt.groupID)
+		}
 		// (8) Separator: the end of the optional fields is marked by a single hyphen.
 		fmt.Fprintf(buf, "- ")
 
@@ -1095,4 +1155,24 @@ func superBlockOpts(mountPath string, mnt *Mount) string {
 	}
 
 	return opts
+}
+
+// allocateGroupID returns a new mount group id if one is available, and and
+// error otherwise.
+func (vfs *VirtualFilesystem) allocateGroupID() (uint32, error) {
+	vfs.groupIDBitmapMu.Lock()
+	defer vfs.groupIDBitmapMu.Unlock()
+	groupID, err := vfs.groupIDBitmap.FirstZero(1)
+	if err != nil {
+		return 0, err
+	}
+	vfs.groupIDBitmap.Add(groupID)
+	return groupID, nil
+}
+
+// freeGroupID marks a groupID as available for reuse.
+func (vfs *VirtualFilesystem) freeGroupID(id uint32) {
+	vfs.groupIDBitmapMu.Lock()
+	defer vfs.groupIDBitmapMu.Unlock()
+	vfs.groupIDBitmap.Remove(id)
 }

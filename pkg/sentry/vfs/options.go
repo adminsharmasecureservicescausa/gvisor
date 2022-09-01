@@ -98,6 +98,10 @@ type MountFlags struct {
 	// filesystem should not honor set-user-ID and set-group-ID bits or
 	// file capabilities when executing programs.
 	NoSUID bool
+
+	// Shared is equivalent to MS_SHARED and indicates whether the propagation
+	// type of the mount is shared.
+	Shared bool
 }
 
 // MountOptions contains options to VirtualFilesystem.MountAt().

@@ -37,10 +37,12 @@ package vfs
 
 import (
 	"fmt"
+	"math"
 	"path"
 
 	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/pkg/atomicbitops"
+	"gvisor.dev/gvisor/pkg/bitmap"
 	"gvisor.dev/gvisor/pkg/context"
 	"gvisor.dev/gvisor/pkg/errors/linuxerr"
 	"gvisor.dev/gvisor/pkg/fspath"
@@ -123,6 +125,10 @@ type VirtualFilesystem struct {
 	// filesystemsMu.
 	filesystemsMu sync.Mutex `state:"nosave"`
 	filesystems   map[*Filesystem]struct{}
+
+	// groupIDBitmap tracks which mount group IDs are available for allocation.
+	groupIDBitmapMu sync.RWMutex `state:"nosave"`
+	groupIDBitmap   bitmap.Bitmap
 }
 
 // Init initializes a new VirtualFilesystem with no mounts or FilesystemTypes.
@@ -137,6 +143,10 @@ func (vfs *VirtualFilesystem) Init(ctx context.Context) error {
 	vfs.fsTypes = make(map[string]*registeredFilesystemType)
 	vfs.filesystems = make(map[*Filesystem]struct{})
 	vfs.mounts.Init()
+
+	vfs.groupIDBitmapMu.Lock()
+	vfs.groupIDBitmap = bitmap.New(math.MaxInt32)
+	vfs.groupIDBitmapMu.Unlock()
 
 	// Construct vfs.anonMount.
 	anonfsDevMinor, err := vfs.GetAnonBlockDevMinor()

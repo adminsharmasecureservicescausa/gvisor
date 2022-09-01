@@ -759,6 +759,138 @@ TEST(MountTest, TmpfsSizeMmap) {
               ::testing::KilledBySignal(SIGBUS), "");
   EXPECT_THAT(munmap(addr, 2 * kPageSize), SyscallSucceeds());
 }
+
+// Tests that it is possible to make a shared mount.
+TEST(MountTest, MakeShared) {
+  SKIP_IF(!ASSERT_NO_ERRNO_AND_VALUE(HaveCapability(CAP_SYS_ADMIN)));
+
+  auto const dir = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDir());
+  auto const mnt = ASSERT_NO_ERRNO_AND_VALUE(
+      Mount("", dir.path().c_str(), "tmpfs", 0, "", 0));
+  ASSERT_THAT(mount("", dir.path().c_str(), "", MS_SHARED, 0),
+              SyscallSucceeds());
+
+  const std::vector<ProcMountInfoEntry> mounts =
+      ASSERT_NO_ERRNO_AND_VALUE(ProcSelfMountInfoEntries());
+  for (const auto& e : mounts) {
+    if (e.mount_point == dir.path()) {
+      EXPECT_EQ(e.optional, "shared:1");
+    }
+  }
+}
+
+// Tests that shared mounts have different group IDs.
+TEST(MountTest, MakeMultipleShared) {
+  SKIP_IF(!ASSERT_NO_ERRNO_AND_VALUE(HaveCapability(CAP_SYS_ADMIN)));
+
+  auto const dir1 = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDir());
+  auto const mount1 =
+      ASSERT_NO_ERRNO_AND_VALUE(Mount("", dir1.path(), "tmpfs", 0, "", 0));
+  ASSERT_THAT(mount("", dir1.path().c_str(), "", MS_SHARED, 0),
+              SyscallSucceeds());
+
+  auto const dir2 = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDir());
+  auto const mount2 =
+      ASSERT_NO_ERRNO_AND_VALUE(Mount("", dir2.path(), "tmpfs", 0, "", 0));
+  ASSERT_THAT(mount("", dir2.path().c_str(), "", MS_SHARED, 0),
+              SyscallSucceeds());
+
+  const std::vector<ProcMountInfoEntry> mounts =
+      ASSERT_NO_ERRNO_AND_VALUE(ProcSelfMountInfoEntries());
+  for (const auto& e : mounts) {
+    if (e.mount_point == dir1.path()) {
+      EXPECT_EQ(e.optional, "shared:1");
+    } else if (e.mount_point == dir2.path()) {
+      EXPECT_THAT(e.optional, "shared:2");
+    }
+  }
+}
+
+// Tests that shared mounts reused group IDs from deleted groups.
+TEST(MountTest, ReuseGroupIDs) {
+  SKIP_IF(!ASSERT_NO_ERRNO_AND_VALUE(HaveCapability(CAP_SYS_ADMIN)));
+
+  auto const dir1 = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDir());
+  auto const mount1 =
+      ASSERT_NO_ERRNO_AND_VALUE(Mount("", dir1.path(), "tmpfs", 0, "", 0));
+  ASSERT_THAT(mount("", dir1.path().c_str(), "", MS_SHARED, 0),
+              SyscallSucceeds());
+
+  auto const dir2 = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDir());
+  {
+    auto const mount2 =
+        ASSERT_NO_ERRNO_AND_VALUE(Mount("", dir2.path(), "tmpfs", 0, "", 0));
+    ASSERT_THAT(mount("", dir2.path().c_str(), "", MS_SHARED, 0),
+                SyscallSucceeds());
+
+    const std::vector<ProcMountInfoEntry> mounts =
+        ASSERT_NO_ERRNO_AND_VALUE(ProcSelfMountInfoEntries());
+    for (const auto& e : mounts) {
+      if (e.mount_point == dir2.path()) {
+        EXPECT_EQ(e.optional, "shared:2");
+      }
+    }
+  }
+
+  // Check that created a new shared mount reuses the ID 2.
+  auto const mount2 =
+      ASSERT_NO_ERRNO_AND_VALUE(Mount("", dir2.path(), "tmpfs", 0, "", 0));
+  ASSERT_THAT(mount("", dir2.path().c_str(), "", MS_SHARED, 0),
+              SyscallSucceeds());
+  const std::vector<ProcMountInfoEntry> mounts =
+      ASSERT_NO_ERRNO_AND_VALUE(ProcSelfMountInfoEntries());
+  for (const auto& e : mounts) {
+    if (e.mount_point == dir2.path()) {
+      EXPECT_EQ(e.optional, "shared:2");
+    }
+  }
+}
+
+// Tests that a child mount inherits the propagation type of its parent.
+TEST(MountTest, InerheritPropagation) {
+  SKIP_IF(!ASSERT_NO_ERRNO_AND_VALUE(HaveCapability(CAP_SYS_ADMIN)));
+
+  auto const dir1 = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDir());
+  auto const mount1 =
+      ASSERT_NO_ERRNO_AND_VALUE(Mount("", dir1.path(), "tmpfs", 0, "", 0));
+  ASSERT_THAT(mount("", dir1.path().c_str(), "", MS_SHARED, 0),
+              SyscallSucceeds());
+
+  auto const dir2 =
+      ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDirIn(dir1.path()));
+  auto const mount2 =
+      ASSERT_NO_ERRNO_AND_VALUE(Mount("", dir2.path(), "tmpfs", 0, "", 0));
+
+  const std::vector<ProcMountInfoEntry> mounts =
+      ASSERT_NO_ERRNO_AND_VALUE(ProcSelfMountInfoEntries());
+  for (const auto& e : mounts) {
+    if (e.mount_point == dir2.path()) {
+      EXPECT_EQ(e.optional, "shared:2");
+    }
+  }
+}
+
+// Tests that it is possible to make a mount private again after it is shared.
+TEST(MountTest, MakePrivate) {
+  SKIP_IF(!ASSERT_NO_ERRNO_AND_VALUE(HaveCapability(CAP_SYS_ADMIN)));
+
+  auto const dir = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDir());
+  auto const mnt =
+      ASSERT_NO_ERRNO_AND_VALUE(Mount("", dir.path(), "tmpfs", 0, "", 0));
+  ASSERT_THAT(mount("", dir.path().c_str(), "", MS_SHARED, 0),
+              SyscallSucceeds());
+  ASSERT_THAT(mount("", dir.path().c_str(), "", MS_PRIVATE, 0),
+              SyscallSucceeds());
+
+  const std::vector<ProcMountInfoEntry> mounts =
+      ASSERT_NO_ERRNO_AND_VALUE(ProcSelfMountInfoEntries());
+  for (const auto& e : mounts) {
+    if (e.mount_point == dir.path()) {
+      EXPECT_EQ(e.optional, "");
+    }
+  }
+}
+
 }  // namespace
 
 }  // namespace testing

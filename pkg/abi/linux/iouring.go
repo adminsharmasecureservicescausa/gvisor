@@ -39,6 +39,14 @@ const (
 	IORING_MAX_ENTRIES = (1 << 15) // 32768
 )
 
+// Constants for the offsets for the application to mmap the data it needs.
+// See include/uapi/linux/io_uring.h.
+const (
+	IORING_OFF_SQ_RING = 0
+	IORING_OFF_CQ_RING = 0x8000000
+	IORING_OFF_SQES    = 0x10000000
+)
+
 // IoSqringOffsets implements io_sqring_offsets struct.
 // See include/uapi/linux/io_uring.h.
 //

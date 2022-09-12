@@ -27,6 +27,10 @@ namespace testing {
 
 #define __NR_io_uring_setup 425
 
+#define IORING_OFF_SQ_RING 0ULL
+#define IORING_OFF_CQ_RING 0x8000000ULL
+#define IORING_OFF_SQES 0x10000000ULL
+
 struct io_sqring_offsets {
   uint32_t head;
   uint32_t tail;

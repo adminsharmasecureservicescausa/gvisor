@@ -9,7 +9,11 @@ go_library(
     deps = [
         "//pkg/abi/linux",
         "//pkg/context",
+        "//pkg/errors/linuxerr",
         "//pkg/hostarch",
+        "//pkg/sentry/memmap",
+        "//pkg/sentry/pgalloc",
+        "//pkg/sentry/usage",
         "//pkg/sentry/vfs",
     ],
 )

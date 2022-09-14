@@ -58,6 +58,7 @@ func (fs *filesystem) newTaskInode(ctx context.Context, task *kernel.Task, pidns
 		"cmdline":   fs.newTaskOwnedInode(ctx, task, fs.NextIno(), 0444, &metadataData{task: task, metaType: Cmdline}),
 		"comm":      fs.newComm(ctx, task, fs.NextIno(), 0444),
 		"cwd":       fs.newCwdSymlink(ctx, task, fs.NextIno()),
+		"root":      fs.newRootSymlink(ctx, task, fs.NextIno()),
 		"environ":   fs.newTaskOwnedInode(ctx, task, fs.NextIno(), 0444, &metadataData{task: task, metaType: Environ}),
 		"exe":       fs.newExeSymlink(ctx, task, fs.NextIno()),
 		"fd":        fs.newFDDirInode(ctx, task),
